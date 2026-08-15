@@ -28,7 +28,22 @@ mock.method(Layout, "findOneAndUpdate", (query, update) => {
   const data = update.$set || update.$setOnInsert;
   return Promise.resolve({ ...data, toJSON: () => data });
 });
-mock.method(Layout, "find", () => ({ lean: () => Promise.resolve([{ id: "kitchen-iridium", status: "draft", zones: [{}] }]) }));
+const layoutDocs = [
+  { id: "kitchen-iridium", name: "Kitchen IRIDIUM", type: "photo", roomId: "kitchen", status: "draft", background: null, foreground: null, zones: [{}] },
+  { id: "kitchen-onyx", name: "Kitchen ONYX", type: "photo", roomId: "kitchen", status: "published", background: "bg", foreground: "fg", zones: [{}, {}] },
+  { id: "kitchen-cloud", name: "Kitchen CLOUD", type: "photo", roomId: "kitchen", status: "published", background: null, foreground: null, zones: [] },
+  { id: "living-room", name: "Living", type: "photo", roomId: "living-room", status: "draft", background: null, foreground: null, zones: [] },
+];
+let lastListFilter = null;
+mock.method(Layout, "find", (filter = {}) => {
+  lastListFilter = filter;
+  const results = layoutDocs.filter((d) => {
+    if (filter.roomId && d.roomId !== filter.roomId) return false;
+    if (filter.status && d.status !== filter.status) return false;
+    return true;
+  });
+  return { lean: () => Promise.resolve(results) };
+});
 mock.method(Layout, "create", (doc) => Promise.resolve(doc));
 
 async function tmpDir() {
@@ -61,6 +76,22 @@ test("create / read / list round-trip", async () => {
   assert.ok(found, "layout listed");
   assert.equal(found.status, "draft");
   assert.equal(found.zoneCount, 1);
+});
+
+test("listLayouts forwards roomId and status filters into the query", async () => {
+  const dir = await tmpDir();
+  const storage = new LayoutStorage(dir);
+
+  const published = await storage.listLayouts({ roomId: "kitchen", status: "published" });
+  assert.deepEqual(lastListFilter, { roomId: "kitchen", status: "published" });
+  assert.equal(published.length, 2);
+  assert.ok(published.every((l) => l.roomId === "kitchen" && l.status === "published"));
+  assert.equal(published[0].id, "kitchen-onyx");
+  assert.equal(published[0].hasBackground, true);
+  assert.equal(published[0].zoneCount, 2);
+
+  const none = await storage.listLayouts({ roomId: "bathroom", status: "published" });
+  assert.equal(none.length, 0);
 });
 
 test("concurrent migrations complete without failure", async () => {
